@@ -15,33 +15,38 @@ class ReplayBuffer:
     """
 # 定义replay buffer，初始化函数输入state，action大小和size变量，用来决定buffer中矩阵的行与列的数量，buffer class中每一个小的子buffer，存放size条state与action。
     def __init__(self, obs_dim, act_dim, size):
-        self.obs_buf = np.zeros(core.combined_shape(size, obs_dim), dtype=np.float32)
-        self.obs2_buf = np.zeros(core.combined_shape(size, obs_dim), dtype=np.float32)
+        self.obs_buf = np.zeros(core.combined_shape(size, obs_dim), dtype=np.float32) #因为obs和action本身数据结构可能复杂，所以是一个矩阵
+        self.obs2_buf = np.zeros(core.combined_shape(size, obs_dim), dtype=np.float32) #指定数据类型可以避免许多数值问题，免得默认的数据类型不一样导致bug
         self.act_buf = np.zeros(core.combined_shape(size, act_dim), dtype=np.float32)
-        self.rew_buf = np.zeros(size, dtype=np.float32)
+        self.rew_buf = np.zeros(size, dtype=np.float32) #reward和done都是一个值所以不需要存为矩阵，只要一维即可。
         self.done_buf = np.zeros(size, dtype=np.float32)
         self.ptr, self.size, self.max_size = 0, 0, size
-
+        
+# 存储函数输入一个转移的全部数据，然后会存到buffer中，buffer是当前存储的全部数据，buffer之外的数据会被丢弃
     def store(self, obs, act, rew, next_obs, done):
-        self.obs_buf[self.ptr] = obs
+        self.obs_buf[self.ptr] = obs #self.ptr是一个计数器，对应着现在是存第几个数据
         self.obs2_buf[self.ptr] = next_obs
         self.act_buf[self.ptr] = act
         self.rew_buf[self.ptr] = rew
         self.done_buf[self.ptr] = done
-        self.ptr = (self.ptr+1) % self.max_size
-        self.size = min(self.size+1, self.max_size)
+        self.ptr = (self.ptr+1) % self.max_size #如果ptr+1的大小超过了maxsize，则会从前向后覆盖replay buffer
+        self.size = min(self.size+1, self.max_size) #selfsize是在记录当前buffer的大小，如果buffer满了其大小不再增长，selfsize将一直等于maxsize
 
+# batch的大小远小于buffer，且batch从buffer生成，所以要先定义buffer，再定义batch。
     def sample_batch(self, batch_size=32):
-        idxs = np.random.randint(0, self.size, size=batch_size)
+        idxs = np.random.randint(0, self.size, size=batch_size) # It generates random integers between 0 (inclusive) and self.size (exclusive). The size parameter determines the number of integers to generate, and in this case, it is set to batch_size. 也就是说，idxs生成了一个buffer需要存放的数据对应的坐标，如果buffer满了，将从0到buffersize之间生成32个数据组成idxs，其为一个nparray。
         batch = dict(obs=self.obs_buf[idxs],
                      obs2=self.obs2_buf[idxs],
                      act=self.act_buf[idxs],
                      rew=self.rew_buf[idxs],
-                     done=self.done_buf[idxs])
-        return {k: torch.as_tensor(v, dtype=torch.float32) for k,v in batch.items()}
+                     done=self.done_buf[idxs]) #将batch存成一个字典，每一个batch中包含'obs': torch.Tensor(...)等5个键值对
+        return {k: torch.as_tensor(v, dtype=torch.float32) for k,v in batch.items()} # 这个return的目的是进行一个数据格式的转换，其实也可以直接return batch，但是一般使用到batch的时候就准备进行SGD了，因此直接将np数据转换为torch tensor。要理解其返回的依然是一个字典，只不过value的值变成了torch tensor。
 
-
-
+# 这个是SAC算法的主函数，像spinningup这种较为简单的框架，会把一个算法所有的东西都写成一个函数，这样比较易于理解。
+# 这其中比较重要的有env_fn：决定了跑哪个环境，这个东西必须满足OpenAI Gym的API，比如说可以丢进去一个action，然后用step返回下一帧的信息等。如果要换成不满足gym API的环境，（可能）最简单的方式是，写一个壳子，让那个环境可以向Gym一样被调用，而不是将sac中的数据结构改成新环境的数据结构。
+# actor_critic:创建sac算法中需要用到的网络。actor_critic=core.MLPActorCritic这个是一乐MLP类，相当于创建了actor网络和critic网络。所以要修改网络结构，需要看core.MLPActorCritic这个类，同时ac_kwargs=dict()是输入网络相关参数的，同样需要看这个类。这个框架默认使用的是最传统的三层网络结构，你可把网络参数写成输入从而方便的调节网络，但是建议你要么先实验，要么参考别人的网络结构，不然搜索的空间将过大。
+# ac_kwargs=dict()与logger_kwargs=dict()这种把超参做成字典作为输入，一般对应一个比较大的算法子模块，如果把字典里面的超参拆开输入也可以，但是一般都不是实验关心的核心超参，所以干脆封装成一个字典输入，这样会比较干净，甚至可以把“seed=0, steps_per_epoch=4000, epochs=100...”全部封装成一个字典作为输入。
+# polyak,目标网络修改的频率，举例来说，目标网络会按照一定步长做修改，而不是直接复制价值网络，polyak就决定修改的幅度。
 def sac(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0, 
         steps_per_epoch=4000, epochs=100, replay_size=int(1e6), gamma=0.99, 
         polyak=0.995, lr=1e-3, alpha=0.2, batch_size=100, start_steps=10000, 
