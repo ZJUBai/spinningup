@@ -1,4 +1,4 @@
-**Status:** Maintenance (expect bug fixes and minor updates)
+**What this fork do:** annotate the most commonly used baselines as a exercise.
 
 Welcome to Spinning Up in Deep RL! 
 ==================================
