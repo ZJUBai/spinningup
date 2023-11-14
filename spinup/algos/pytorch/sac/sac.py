@@ -13,7 +13,7 @@ class ReplayBuffer:
     """
     A simple FIFO experience replay buffer for SAC agents.
     """
-
+# 定义replay buffer，初始化函数输入state，action大小和size变量，用来决定buffer中矩阵的行与列的数量，buffer class中每一个小的子buffer，存放size条state与action。
     def __init__(self, obs_dim, act_dim, size):
         self.obs_buf = np.zeros(core.combined_shape(size, obs_dim), dtype=np.float32)
         self.obs2_buf = np.zeros(core.combined_shape(size, obs_dim), dtype=np.float32)
