@@ -10,7 +10,8 @@ from torch.distributions.normal import Normal
 def combined_shape(length, shape=None):
     if shape is None:
         return (length,)
-    return (length, shape) if np.isscalar(shape) else (length, *shape)
+    return (length, shape) if np.isscalar(shape) else (length, *shape) 
+    #isscalar检查shape是实数还是别的，是实数返回(length,shape)。When * is used in a function call or a tuple creation, it allows you to unpack（打包） the elements of an iterable (such as a list or tuple) and include them as separate elements in the resulting sequence. 举例来说length = 3 shape = (4, 5) result = (length, *shape)； the value of result would be a tuple (3, 4, 5)
 
 def mlp(sizes, activation, output_activation=nn.Identity):
     layers = []
