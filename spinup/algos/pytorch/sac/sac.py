@@ -148,7 +148,7 @@ def sac(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
             the current policy and value function.
 
     """
-
+    # 这里先定义存储的log文件，Epochlogger是从utils中import的一个class。
     logger = EpochLogger(**logger_kwargs)
     logger.save_config(locals())
 
