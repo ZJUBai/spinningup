@@ -164,15 +164,19 @@ def sac(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     # 首先这里假设是连续的，那么env.action_space.high[0]将拿到action第一个维度的upper bound，但是作为所有action维度的bound确实可能带来bug，需要确认是不是真的所有action的范围都是（-1，1）！经过核实，Mujoco的所有环境都把动作归一化到了固定范围，虽然不一定是（-1，1），但所有action的维度都是一样的。
     act_limit = env.action_space.high[0]
 
-    # Create actor-critic module and target networks，开始创建网络。这里的actor_critic是一个函数输入， actor_critic=core.MLPActorCritic，所以说ac=core.MLPActorCritic(env.observation_space, env.action_space, **ac_kwargs)
-    ac = actor_critic(env.observation_space, env.action_space, **ac_kwargs)
-    ac_targ = deepcopy(ac)
+    # Create actor-critic module and target networks，开始创建网络。这里的actor_critic是一个函数输入，该函数会调用core.MLPActorCritic。则actor_critic=core.MLPActorCritic，所以说ac=core.MLPActorCritic(env.observation_space, env.action_space, **ac_kwargs)
+    ac = actor_critic(env.observation_space, env.action_space, **ac_kwargs) # 到此网络完成创建
+    ac_targ = deepcopy(ac) # 定义目标网络
 
     # Freeze target networks with respect to optimizers (only update via polyak averaging)
     for p in ac_targ.parameters():
         p.requires_grad = False
+        # ！！这种一般就是固定用法，如果使用了目标网络，目标网络是不需要更新参数的，它的参数都是从Q网络按照比例复制而来的。
+        # 那么根据前面说的，如果使用了nn.modular，却有确定不需要计算梯度，将梯度置为False可以避免而外的torch自动求导带来的存储上的占用。
+        # nn.Module 类提供了 .parameters() 方法，该方法用于返回模型中包含的所有可训练参数的生成器（Generator）。
+        # 这个生成器可以通过迭代访问模型中的所有可训练参数。
         
-    # List of parameters for both Q-networks (save this for convenience)
+    # List of parameters for both Q-networks (save this for convenience) <------
     q_params = itertools.chain(ac.q1.parameters(), ac.q2.parameters())
 
     # Experience buffer
