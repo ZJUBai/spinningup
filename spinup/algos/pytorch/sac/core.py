@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.normal import Normal
 
+# 这个core文件代码，主要定义了（1）不影响算法理解，但需要使用的操作（2）神经网络的结构，因此在alg文件中，只要一行命令就可以创建一整个价值网络和策略网络，而网络的torch结构，在这个文件中定义。之所以要读代码，也是让你学习一下强化学习代码写作的文件格式，不要一个文件放下所有的东西。
 
 def combined_shape(length, shape=None):
     if shape is None:
@@ -74,10 +75,11 @@ class MLPQFunction(nn.Module):
         super().__init__()
         self.q = mlp([obs_dim + act_dim] + list(hidden_sizes) + [1], activation)
 
-    def forward(self, obs, act):
+    def forward(self, obs, act): # 还记得，forward（前向过程）是将输入放进网络，得到输出的过程。
         q = self.q(torch.cat([obs, act], dim=-1))
         return torch.squeeze(q, -1) # Critical to ensure q has right shape.
 
+# 这个class属于为actor critic选择网络结构，还是属于比较高层的网络，其调用的函数才是网络的具体结构。
 class MLPActorCritic(nn.Module):
 
     def __init__(self, observation_space, action_space, hidden_sizes=(256,256),
@@ -93,7 +95,10 @@ class MLPActorCritic(nn.Module):
         self.q1 = MLPQFunction(obs_dim, act_dim, hidden_sizes, activation)
         self.q2 = MLPQFunction(obs_dim, act_dim, hidden_sizes, activation)
 
+# 这里定义的是得到动作的函数，就是把obs放到了pi网络里面。deterministic看SquashedGaussianMLPActor，这个是具体的网络，spinningup将每个不同的网络结构封装成类。
     def act(self, obs, deterministic=False):
-        with torch.no_grad():
+        with torch.no_grad(): # 这个是常见且关键的操作，详细解释见下面。
             a, _ = self.pi(obs, deterministic, False)
             return a.numpy()
+# 在PyTorch中，默认情况下，每个操作都会跟踪其输入的梯度，以便在反向传播时计算梯度。这种机制是为了支持自动微分，从而可以方便地进行梯度下降优化。但是这回占用额外的内存和计算资源，因此如果在执行神经网络的某个地方确切地知道你不需要计算梯度，使用 with torch.no_grad(): 是一种良好的实践。这可以降低内存消耗和计算开销，特别是在推理阶段或者其他不需要梯度信息的计算中。
+# 而这个地方，我们只是为了从策略网络拿到具体的动作，是不需要梯度的。！！！这个东西应该是很经验的，只有你看了多了代码才能确保自己不会写错，不要乱加。
