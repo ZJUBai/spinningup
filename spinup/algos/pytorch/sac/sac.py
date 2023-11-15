@@ -152,17 +152,19 @@ def sac(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     logger = EpochLogger(**logger_kwargs)
     logger.save_config(locals())
 
-    torch.manual_seed(seed)
+    torch.manual_seed(seed) # 这里设置随机种子，torch与np中的随机性会由各自的随机种子决定。不是所有函数都有返回，torch是一个非常大的类，中间有很多self.para的东西，相当于你传入了一个参数，就存放torch中，直到下次有代码覆盖这个值，这个值就一直不会变，而当需要用到的时候，就会自动调用这里面存放的值。
     np.random.seed(seed)
 
-    env, test_env = env_fn(), env_fn()
-    obs_dim = env.observation_space.shape
-    act_dim = env.action_space.shape[0]
+    env, test_env = env_fn(), env_fn() # env_fn()是输入的环境，这个地方与gym的API不完全相同，不过基本可以理解成env = gym.make("CartPole-v1")，这里env_fn就相当于gym.make，因为算法与环境是分开的，所以不会写成gym.make。
+    obs_dim = env.observation_space.shape # observation其实本质上不需要区分连续与离散，因为不论游戏展现出来的是围棋还是星际争霸，其实对于RL都是离散环境，都是输入一个action，返回下一state，因此state需要注意的是是否是图象输入，而action需要注意是否连续动作。
+    act_dim = env.action_space.shape[0] # 这个地方就要开始注意环境是连续动作空间还是离散动作空间，如果是连续动作空间，shape【0】会拿到动作的维度，如果是离散空间，动作的的返回是离散动作的数量，这个地方还是要具体看Gym的API。
+    # state是否图象，action是否连续是会关系到相应网络结构的。
 
     # Action limit for clamping: critically, assumes all dimensions share the same bound!
+    # 首先这里假设是连续的，那么env.action_space.high[0]将拿到action第一个维度的upper bound，但是作为所有action维度的bound确实可能带来bug，需要确认是不是真的所有action的范围都是（-1，1）！经过核实，Mujoco的所有环境都把动作归一化到了固定范围，虽然不一定是（-1，1），但所有action的维度都是一样的。
     act_limit = env.action_space.high[0]
 
-    # Create actor-critic module and target networks
+    # Create actor-critic module and target networks，开始创建网络。这里的actor_critic是一个函数输入， actor_critic=core.MLPActorCritic，所以说ac=core.MLPActorCritic(env.observation_space, env.action_space, **ac_kwargs)
     ac = actor_critic(env.observation_space, env.action_space, **ac_kwargs)
     ac_targ = deepcopy(ac)
 
