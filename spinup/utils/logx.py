@@ -300,6 +300,7 @@ class Logger:
         self.log_current_row.clear()
         self.first_row=False
 
+# 这个类继承自上面的logger，所以具有父类的所有功能。此外，官方注释中也写道，专门定义这个类是为了存放每个epoch中的计算值。
 class EpochLogger(Logger):
     """
     A variant of Logger tailored for tracking average values over epochs.
@@ -326,9 +327,10 @@ class EpochLogger(Logger):
     """
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs) # 使用父类初始化
         self.epoch_dict = dict()
 
+    # 读函数就会面临的问题是，你不知道输入的东西的数据结构，也不知道这个是干什么的，但是在这个函数中，由于输入的数据结构不同，会对他进行不同的操作，因此必须要弄明白输入的数据结构，不要用数学的思维，把输入当成未知变量。
     def store(self, **kwargs):
         """
         Save something into the epoch_logger's current state.
