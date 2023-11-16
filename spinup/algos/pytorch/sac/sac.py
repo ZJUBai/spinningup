@@ -165,8 +165,9 @@ def sac(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     act_limit = env.action_space.high[0]
 
     # Create actor-critic module and target networks，开始创建网络。这里的actor_critic是一个函数输入，该函数会调用core.MLPActorCritic。则actor_critic=core.MLPActorCritic，所以说ac=core.MLPActorCritic(env.observation_space, env.action_space, **ac_kwargs)
-    ac = actor_critic(env.observation_space, env.action_space, **ac_kwargs) # 到此网络完成创建
+    ac = actor_critic(env.observation_space, env.action_space, **ac_kwargs) 
     ac_targ = deepcopy(ac) # 定义目标网络
+    # 到此网络完成创建！
 
     # Freeze target networks with respect to optimizers (only update via polyak averaging)
     for p in ac_targ.parameters():
@@ -178,6 +179,8 @@ def sac(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
         
     # List of parameters for both Q-networks (save this for convenience) <------
     q_params = itertools.chain(ac.q1.parameters(), ac.q2.parameters())
+    # ！！！重点知识——迭代器：ac.q1.parameters()本身就是一个迭代器，换句话说你可以使用for param in ac.q1.parameters(): print(param)
+    # 遍历神经网络中的所有parameters，而这里的itertools.chain函数的作用是把两个迭代器粘在一起，变成一个连续的迭代器。
 
     # Experience buffer，初始化replay buffer。
     replay_buffer = ReplayBuffer(obs_dim=obs_dim, act_dim=act_dim, size=replay_size)
@@ -237,39 +240,53 @@ def sac(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
 
     # Set up function for computing SAC pi loss
     def compute_loss_pi(data):
-        o = data['obs']
-        pi, logp_pi = ac.pi(o)
+        # 你会发现这里面有些计算在算loss_q的时候计算过，我觉得有以下原因：（1）不要让loss_pi loss_q混起来，宁愿让同样的数据过两遍NN
+        # （2）在走main loop的时候，不一定是各自都更新一次，所以不要把两个loss写成一个function。
+        o = data['obs'] # pi的loss是-Q+正则项，这个值越小越好
+        pi, logp_pi = ac.pi(o) 
         q1_pi = ac.q1(o, pi)
         q2_pi = ac.q2(o, pi)
         q_pi = torch.min(q1_pi, q2_pi)
 
-        # Entropy-regularized policy loss
-        loss_pi = (alpha * logp_pi - q_pi).mean()
+        # Entropy-regularized policy loss，J(\theta) = -q + alpha*logp_pi, 值得注意的是SAC中在进行bellman更新的时候，就是柔性bellman backup，
+        # 这个和你的算法有着显著的区别，所以这个地方得到的Q函数，本身就是soft Q(s,a)。
+        loss_pi = (alpha * logp_pi - q_pi).mean() # logp_pi对于一个transition已经是一个标量了，mean是对batch求的。
 
         # Useful info for logging
         pi_info = dict(LogPi=logp_pi.detach().numpy())
 
         return loss_pi, pi_info
+        # 到此两个loss就都确定完了，下面就准备更新了。同时注意到，上面定义的两个loss函数都是sac函数里面的函数，所以说当前还是有一个主流程的
+        # 这也是为什么下面会有未封装的代码块的原因，等sac全部结束还要理一遍数据在sac函数中怎么流动的。
 
     # Set up optimizers for policy and q-function
     pi_optimizer = Adam(ac.pi.parameters(), lr=lr)
     q_optimizer = Adam(q_params, lr=lr)
+    # 这个地方定义优化器函数，Adam的好处是它自适应地调节每个参数的学习率（是的，即便你给的是确定的学习率），adam的输入是参数和学习率，具体见文档。
+    # 硬要说代码逻辑，其实前面就可以把pi网络的参数ac.pi.parameters()保存下来了，只不过前面只存了q_params。
 
     # Set up model saving
-    logger.setup_pytorch_saver(ac)
+    logger.setup_pytorch_saver(ac) # 这个是存放模型，虽然之后这种东西基本不会修改，那个logger文件，你也得看掉，。
 
     def update(data):
         # First run one gradient descent step for Q1 and Q2
+        # PyTorch中，梯度默认是会累积的，而在每次优化步骤之前需要清零，否则会影响梯度下降的计算。你可能会想，不清零会怎么样
+        # 首先数学的角度，每个loss算出来的梯度，就在当前的更新步骤中使用，没有看到需要累积的情况。
+        # 其次，如果不清空，梯度会一直加起来，而不是覆盖，首先会导致梯度方向有问题，其次可能会导致梯度爆炸。
         q_optimizer.zero_grad()
         loss_q, q_info = compute_loss_q(data)
         loss_q.backward()
         q_optimizer.step()
+        # loss.backward(): 计算梯度。
+        # q_optimizer.step(): 使用优化器根据计算得到的梯度来更新Q网络的参数。
+        # 换句话说，使用backward只是计算出了梯度，因为梯度是确定的，但是如何更新有很多技巧（例如学习率），这都是优化器决定的。
+        # 因此让优化器走一步，才会更新网络参数。至于优化器会更新哪个网络的参数，是在定义优化器的时候就确定好的：q_optimizer = Adam(q_params, lr=lr)
 
         # Record things
         logger.store(LossQ=loss_q.item(), **q_info)
 
-        # Freeze Q-networks so you don't waste computational effort 
-        # computing gradients for them during the policy learning step.
+        # Freeze Q-networks so you don't waste computational effort computing gradients for them during the policy learning step.
+        # 这里代码原来就解释的很清楚了，冻住的目的不一定是为了部分更新等高级操作，很可能就是为了节省算力。
         for p in q_params:
             p.requires_grad = False
 
@@ -293,13 +310,24 @@ def sac(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
                 # params, as opposed to "mul" and "add", which would make new tensors.
                 p_targ.data.mul_(polyak)
                 p_targ.data.add_((1 - polyak) * p.data)
+                # .data 是 PyTorch 中 Tensor 的一个属性，它提供了对底层数据的直接访问，但不会记录梯度信息。.data 的使用在 PyTorch 0.4 版本及之前比较常见。在更新后的版本（0.4 之后），PyTorch 引入了tensor.detach()函数来达到类似的效果，同时更加安全。
+                # .mul_() 和 .add_() 是 PyTorch Tensor 类中的 in-place 操作函数。这些函数在现有的 Tensor 上执行操作，而不是创建新的 Tensor。
+                # tensor.mul_(value)：对 Tensor 中的每个元素都乘以给定的值 value，并将结果保存在原始的 Tensor 中。这是一个 in-place 的操作。
+                # tensor.add_(value)：对 Tensor 中的每个元素都加上给定的值 value，并将结果保存在原始的 Tensor 中。同样，这也是一个 in-place 操作。
 
     def get_action(o, deterministic=False):
-        return ac.act(torch.as_tensor(o, dtype=torch.float32), 
-                      deterministic)
+        return ac.act(torch.as_tensor(o, dtype=torch.float32), deterministic)
+        # 这个地方你可能会想，为什么前面obs直接就扔到了网络里面，而这个地方却要加一个将o转换为torch tensor的操作呢？
+        # ANS：因为前面操作都是从replay-buffer中拿的数据，而replay buffer最后的输出已经将所有obs都转换为tensor了，
+        # 其实也可以想想，在进行神经网络运算的时候，一定是用tensor安全，怎么可能直接把observation丢进去。
+        # 而这个地方，由于是get action，很有可能是与环境交互，得到的obs是环境直接返回的，因此在这里要加上一个将o转换为torch tensor的操作。    
 
     def test_agent():
         for j in range(num_test_episodes):
+            # 这些函数都是SAC的内部函数，test_env变量在调用SAC的时候就会输入。同时这个地方也能弄明白两点：
+            # （1）与环境交互是单个state单个动作进行的，无法使用tensor，因为gym API并不支持从任意state开始
+            # （2）解释了为什么上面get_action函数需要将obs转换为tensor；以及在什么情况下会使用deterministic policy。
+            # （3）换句话说，我们的代码这个，地方是不是也要考虑使用确定性策略？
             o, d, ep_ret, ep_len = test_env.reset(), False, 0, 0
             while not(d or (ep_len == max_ep_len)):
                 # Take deterministic actions at test time 
@@ -309,9 +337,10 @@ def sac(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
             logger.store(TestEpRet=ep_ret, TestEpLen=ep_len)
 
     # Prepare for interaction with environment
-    total_steps = steps_per_epoch * epochs
-    start_time = time.time()
-    o, ep_ret, ep_len = env.reset(), 0, 0
+    total_steps = steps_per_epoch * epochs # 很重要，关系到总interaction，一般我们所谓的1millio就是与环境交互的次数。
+    start_time = time.time() # 这个是记录系统时间
+    o, ep_ret, ep_len = env.reset(), 0, 0 
+    # 初始化环境，by the way，其实完全可以把这些SAC算法中会执行的命令放在一块，而不是夹在内部函数之中，spinningup这么做主要还是为了理解。
 
     # Main loop: collect experience in env and update/log each epoch
     for t in range(total_steps):
@@ -323,16 +352,17 @@ def sac(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
             a = get_action(o)
         else:
             a = env.action_space.sample()
+        # 第一步：先得到一个动作
 
         # Step the env
         o2, r, d, _ = env.step(a)
         ep_ret += r
         ep_len += 1
+        # 第二步：与环境进行一次交互，环境进入下一状态
 
         # Ignore the "done" signal if it comes from hitting the time
-        # horizon (that is, when it's an artificial terminal signal
-        # that isn't based on the agent's state)
-        d = False if ep_len==max_ep_len else d
+        # horizon (that is, when it's an artificial terminal signal that isn't based on the agent's state)
+        d = False if ep_len==max_ep_len else d <---
 
         # Store experience to replay buffer
         replay_buffer.store(o, a, r, o2, d)
