@@ -322,6 +322,8 @@ def sac(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
         # 其实也可以想想，在进行神经网络运算的时候，一定是用tensor安全，怎么可能直接把observation丢进去。
         # 而这个地方，由于是get action，很有可能是与环境交互，得到的obs是环境直接返回的，因此在这里要加上一个将o转换为torch tensor的操作。    
 
+    # 这个test函数是这样，它没有输入，只要执行test_agent()命令，就会用当前策略玩num_test_episodes把游戏，并且把每局游戏的累计奖励写进log文件
+    # 这也解释了，为什么对于Mujoco这种环境不会终止的游戏，奖励最终也不会无限大（智能体最多就进行比如说2000步交互，如果策略不再提升，奖励也就平稳了）
     def test_agent():
         for j in range(num_test_episodes):
             # 这些函数都是SAC的内部函数，test_env变量在调用SAC的时候就会输入。同时这个地方也能弄明白两点：
@@ -335,6 +337,8 @@ def sac(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
                 ep_ret += r
                 ep_len += 1
             logger.store(TestEpRet=ep_ret, TestEpLen=ep_len)
+            # 这个地方应该是不论测试几把，反正都先记录下来，然后再log文件中计算奖励的均值与方差，最后存放最大，最小，均值，方差几个值，
+            # 所以说具体存什么还是得看log
 
     # Prepare for interaction with environment
     total_steps = steps_per_epoch * epochs # 很重要，关系到总interaction，一般我们所谓的1millio就是与环境交互的次数。
@@ -343,6 +347,8 @@ def sac(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     # 初始化环境，by the way，其实完全可以把这些SAC算法中会执行的命令放在一块，而不是夹在内部函数之中，spinningup这么做主要还是为了理解。
 
     # Main loop: collect experience in env and update/log each epoch
+    # 这个for循环会直接让智能体与环境交互1million次（total_steps = steps_per_epoch * epochs），再交互过程中网络就会按照一定频率更新，
+    # 也就是说，只要运行一次SAC函数，就相当于完成了一轮完整的训练，log文件中就存放了能做出完成performance图的全部数据。
     for t in range(total_steps):
         
         # Until start_steps have elapsed, randomly sample actions
@@ -362,38 +368,44 @@ def sac(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
 
         # Ignore the "done" signal if it comes from hitting the time
         # horizon (that is, when it's an artificial terminal signal that isn't based on the agent's state)
-        d = False if ep_len==max_ep_len else d <---
+        d = False if ep_len==max_ep_len else d # <--- ??? 这个地方不知道是在handle哪种特殊情况，但反正正常情况下影响不大。
 
         # Store experience to replay buffer
-        replay_buffer.store(o, a, r, o2, d)
+        replay_buffer.store(o, a, r, o2, d) # replay buffer 会把单个的输入存成list的形式。
 
         # Super critical, easy to overlook step: make sure to update 
         # most recent observation!
-        o = o2
+        o = o2 # 这一步确实很重要，当然你也可以每次让算法都返回一个当前环境，比如这里让o=env.state，但是并不是所有的gym env都支持这个API。
 
         # End of trajectory handling
         if d or (ep_len == max_ep_len):
             logger.store(EpRet=ep_ret, EpLen=ep_len)
             o, ep_ret, ep_len = env.reset(), 0, 0
+        # 到达done则记录累计回报，然后重置环境。
 
         # Update handling
         if t >= update_after and t % update_every == 0:
             for j in range(update_every):
                 batch = replay_buffer.sample_batch(batch_size)
                 update(data=batch)
+        # 这个地方有点奇怪，假设update_every=50，这个for循环会让神经网络进行50次更新？虽然这样做没什么数学上的问题，但是有必要这样做吗？<---???
 
         # End of epoch handling
         if (t+1) % steps_per_epoch == 0:
             epoch = (t+1) // steps_per_epoch
+            # 如果step达到了4000次的倍数，则epoch+1。
 
             # Save model
+            # save freq默认为1，也就是每个epoch结束后都存一次，epoch达到最大后一定存一次。
             if (epoch % save_freq == 0) or (epoch == epochs):
                 logger.save_state({'env': env}, None)
 
             # Test the performance of the deterministic version of the agent.
             test_agent()
+            # 上面定义的test_agent函数是没有任何返回的，它会把测试的结果（当前策略打一局游戏的累积奖励）直接写进log文件
 
             # Log info about epoch
+            # 到此SAC算法运行一次，把该存的存下来。
             logger.log_tabular('Epoch', epoch)
             logger.log_tabular('EpRet', with_min_and_max=True)
             logger.log_tabular('TestEpRet', with_min_and_max=True)
