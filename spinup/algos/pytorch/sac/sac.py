@@ -179,39 +179,59 @@ def sac(env_fn, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     # List of parameters for both Q-networks (save this for convenience) <------
     q_params = itertools.chain(ac.q1.parameters(), ac.q2.parameters())
 
-    # Experience buffer
+    # Experience buffer，初始化replay buffer。
     replay_buffer = ReplayBuffer(obs_dim=obs_dim, act_dim=act_dim, size=replay_size)
 
-    # Count variables (protip: try to get a feel for how different size networks behave!)
+    # Count variables (protip: try to get a feel for how different size networks behave!) 统计整个网络中所有参数的总数
+    # core.count_vars(module)是自定义的函数，返回module网络中参数的总数。
     var_counts = tuple(core.count_vars(module) for module in [ac.pi, ac.q1, ac.q2])
     logger.log('\nNumber of parameters: \t pi: %d, \t q1: %d, \t q2: %d\n'%var_counts)
+    # 从Logger class来看，这个函数的作用是print一行字。
 
     # Set up function for computing SAC Q-losses
+    # 到了Q loss的重点地方了。搞明白（1）如何计算loss的（2）怎么把loss回传的
     def compute_loss_q(data):
+        # data是replaybuffer中使用sample batch函数拿出来的，还记得当时replaybuffer返回的是一个torch tensor的字典
+        # 还需要的注意的是，到了使用replay buffer的地方，都是使用的batch，replay buffer中就没有定义只使用一个transition的函数。
+        # 使用batch就要注意，输入都将会是多条数据。
         o, a, r, o2, d = data['obs'], data['act'], data['rew'], data['obs2'], data['done']
 
         q1 = ac.q1(o,a)
         q2 = ac.q2(o,a)
+        # 这两个双Q网络是分别初始化，同步训练的，他们之间的网络参数没有任何共享，所以只要用到计算Q(s,a)的地方，就一定会同时出现q1，q2.
+        # ac是一个MLPActorCritic class，ac.q1,ac.q2,ac.pi都是在MLPActorCritic class中定义的self.q1（就是一个网络）
 
         # Bellman backup for Q functions
+        # 还记得之前说的，一但出现只使用target network的时候，就可以使用该命令，避免浪费计算资源。
         with torch.no_grad():
             # Target actions come from *current* policy
             a2, logp_a2 = ac.pi(o2)
 
-            # Target Q-values
+            # Target Q-values，Q(s,a)网络的输出是一个标量值
             q1_pi_targ = ac_targ.q1(o2, a2)
             q2_pi_targ = ac_targ.q2(o2, a2)
             q_pi_targ = torch.min(q1_pi_targ, q2_pi_targ)
+            # 注意，这个地方是SAC的soft bellman backup。参考SAC原文的（2）（3）。此外，原文这个地方是没有weight alpha的版本，alpha是一个控制
+            # 熵正则项大小的超参，可以使用自适应技巧动态调节。同时这个地方就能看出来，当时求log_pi的时候有一个.sum(axis=1)，将action所有维度都求和，
+            # 的理解是正确的，因为Q函数的输出是一个标量，在大多数情况下是无法与action space对齐的，所以要想做这个地方的q_pi_targ - logp_a2运算，
+            # 一定是把logpi(a|s)所有维度对应的log probability求和了。
+            # 虽然前面使用了batch，q_pi_targ不是一个标量，而是一个batch大小的标量，但是这里的理解是没有问题的，只要假设batch的大小为1就可以。
             backup = r + gamma * (1 - d) * (q_pi_targ - alpha * logp_a2)
 
         # MSE loss against Bellman backup
+        # 这个地方求mean是batch更新导致的，而且很常见，求最终loss的时候肯定是多个数据导出loss的均值。
         loss_q1 = ((q1 - backup)**2).mean()
         loss_q2 = ((q2 - backup)**2).mean()
-        loss_q = loss_q1 + loss_q2
-
+        loss_q = loss_q1 + loss_q2 
+        # 这里使用两个Q网络梯度的平均来更新网络是值得深思的。直觉上这里可能会带来无法收敛，不稳定的问题，但是实际使用下来效果却恰恰相反
+        # 使用梯度平均是一种平滑梯度的策略，目的是提高算法的稳定性，并且在实践中表现得相当有效
+        # ！！！所以说，RL有很多很多都是经验上的结论，其数学原理并不一定能被解释清楚，这些东西就需要你看这些大牛写的代码，然后不断积累了。
+        
         # Useful info for logging
+        # 首先这是个字典，然后创建字典的时候，键值对是用“=”连在一起的，虽然存完后变成了“：”但是写的时候用的是“=”
         q_info = dict(Q1Vals=q1.detach().numpy(),
                       Q2Vals=q2.detach().numpy())
+        # Q值被通过.detach().numpy()的操作从PyTorch张量中分离出来，并转换为NumPy数组。.detach()的作用是创建一个新的张量，与原始张量共享相同的底层数据，但不再追踪梯度。.numpy()则将PyTorch张量转换为NumPy数组。
 
         return loss_q, q_info
 
