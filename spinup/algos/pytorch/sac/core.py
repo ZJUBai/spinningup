@@ -24,7 +24,10 @@ def mlp(sizes, activation, output_activation=nn.Identity):
     # 在 Python 中，* 操作符用于解包（unpacking）。在这个上下文中，*layers 将列表 layers 中的元素解包，作为 nn.Sequential() 函数的参数传递进去。nn.Sequential() 函数期望的是一系列的模块作为参数，而不是一个包含模块的列表。通过使用 * 操作符，可以将列表中的元素一个一个地传递给 nn.Sequential()，而不是将整个列表作为一个单独的参数传递。例如，如果 layers 是一个包含三个模块的列表：[module1, module2, module3]，那么 nn.Sequential(*layers) 等价于 nn.Sequential(module1, module2, module3)。这种解包操作是为了方便地将一个列表或元组中的元素传递给函数或构造函数，而不必手动一个一个地列出。在这里，它确保 nn.Sequential() 接收的是多个模块而不是一个包含模块的列表。
 
 def count_vars(module):
-    return sum([np.prod(p.shape) for p in module.parameters()])
+    return sum([np.prod(p.shape) for p in module.parameters()]) 
+    # np.prod是NumPy库中的函数，用于计算数组元素的乘积。在这里，它被用于计算参数p的形状中所有维度的乘积，即参数的总元素数量。
+    # 这样来看，首先 for p in module.parameters() 拿出了网络中的每一层的可学习参数，p.shape可能是(input_dim,output_dim)，这样使用prod乘起来就是
+    # 整层网络的全部参数，然后用sum加起来就是整个网络的全部可学习参数了。
 
 
 LOG_STD_MAX = 2
